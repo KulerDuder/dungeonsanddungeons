@@ -103,6 +103,60 @@ func get_pot_spawn_points() -> Array[Vector3]:
 			
 	return pot_positions
 
+func get_vegetation_spawn_points() -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	var floor_cells: Array[Vector2i] = []
+	
+	for x in range(1, grid_width - 1):
+		for y in range(1, grid_height - 1):
+			if _grid[x][y] == Tile.FLOOR:
+				floor_cells.append(Vector2i(x, y))
+				
+	floor_cells.shuffle()
+	
+	# Jardín frondoso en suelo (~44% de las casillas transitables, con arbustos grandes y flores)
+	var floor_count := int(floor_cells.size() * 0.44)
+	for i in range(mini(floor_count, floor_cells.size())):
+		var c := floor_cells[i]
+		# Empujamos ligeramente hacia los laterales de la baldosa para dejar paso cómodo por el centro
+		var side_x := _rng.randf_range(0.45, 1.05) * (-1.0 if _rng.randf() < 0.5 else 1.0)
+		var side_z := _rng.randf_range(0.45, 1.05) * (-1.0 if _rng.randf() < 0.5 else 1.0)
+		var edge_offset := Vector3(side_x, 0.0, side_z)
+		
+		var roll := _rng.randf()
+		var kind := DungeonVegetation.Kind.FLOOR_LUSH_BUSH
+		if roll < 0.24:
+			kind = DungeonVegetation.Kind.FLOOR_LUSH_BUSH
+		elif roll < 0.46:
+			kind = DungeonVegetation.Kind.FLOOR_FLOWERING_BUSH
+		elif roll < 0.68:
+			kind = DungeonVegetation.Kind.FLOOR_FERN
+		elif roll < 0.86:
+			kind = DungeonVegetation.Kind.FLOOR_FLOWERS
+		else:
+			kind = DungeonVegetation.Kind.FLOOR_MUSHROOMS
+			
+		entries.append({
+			"pos": Vector3(c.x * tile_size, 0.0, c.y * tile_size) + edge_offset,
+			"ceiling": false,
+			"kind": kind
+		})
+		
+	# Techo cubierto de enredaderas y farolillos florales (~42% de las casillas)
+	floor_cells.shuffle()
+	var ceil_count := int(floor_cells.size() * 0.42)
+	for i in range(mini(ceil_count, floor_cells.size())):
+		var c := floor_cells[i]
+		var offset := Vector3(_rng.randf_range(-1.05, 1.05), wall_height, _rng.randf_range(-1.05, 1.05))
+		var kind := DungeonVegetation.Kind.CEILING_VINE if _rng.randf() < 0.65 else DungeonVegetation.Kind.CEILING_HANGING_FLOWER
+		entries.append({
+			"pos": Vector3(c.x * tile_size, 0.0, c.y * tile_size) + offset,
+			"ceiling": true,
+			"kind": kind
+		})
+		
+	return entries
+
 func _init_grid() -> void:
 	_grid.resize(grid_width)
 	for x in range(grid_width):

@@ -1,206 +1,237 @@
-class_name BareFists
-extends WeaponBase
+extends Node3D
 
-var _arm_pivot: Node3D
-var _thumb_mesh: MeshInstance3D
-var _punch_anim_timer: float = 0.0
-var _hit_applied: bool = false
-var _is_left_hand: bool = false
+signal health_changed(current_hp: float, max_hp: float, took_damage: bool)
+signal died
 
-func _init() -> void:
-	weapon_name = "Puñitos"
-	damage = 6.0
-	cooldown = 0.36
+@export_group("Movimiento")
+@export var walk_speed: float = 5.2
+@export var sprint_speed: float = 8.0
+@export var jump_velocity: float = 4.8
+@export var mouse_sensitivity: float = 0.0022
+
+@export_group("Salud")
+@export var max_health: float = 100.0
+
+var _body: CharacterBody3D
+var _head: Node3D
+var _camera: Camera3D
+var _left_hand_pivot: Node3D
+var _right_hand_pivot: Node3D
+var _left_weapon: WeaponBase = null
+var _right_weapon: WeaponBase = null
+
+var _current_health: float = 100.0
+var _is_dead: bool = false
+var _invuln_timer: float = 0.0
+var _bob_time: float = 0.0
+var _left_hand_base_pos := Vector3(-0.34, -0.28, -0.48)
+var _right_hand_base_pos := Vector3(0.34, -0.28, -0.48)
+var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 
 func _ready() -> void:
-	_build_cute_fist_mesh()
-	_apply_handedness()
+	_build_player_rig()
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	_current_health = max_health
+	health_changed.emit(_current_health, max_health, false)
 
-func set_handedness(is_left: bool) -> void:
-	_is_left_hand = is_left
-	_apply_handedness()
-
-func _apply_handedness() -> void:
-	if _thumb_mesh:
-		# Pulgar apuntando hacia el centro de la pantalla en cada mano
-		_thumb_mesh.position.x = 0.042 if _is_left_hand else -0.042
-
-func _build_cute_fist_mesh() -> void:
-	_arm_pivot = Node3D.new()
-	add_child(_arm_pivot)
+func _build_player_rig() -> void:
+	_body = CharacterBody3D.new()
+	_body.name = "PlayerBody"
+	add_child(_body)
 	
-	var skin_mat := _create_skin_material()
-	var sleeve_mat := _create_sleeve_material()
-	var cuff_mat := _create_cuff_material()
+	var col := CollisionShape3D.new()
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = 0.35
+	capsule.height = 1.7
+	col.shape = capsule
+	col.position = Vector3(0, 0.85, 0)
+	_body.add_child(col)
 	
-	# Manga de túnica atrás
-	_add_part(Vector3(0.11, 0.11, 0.18), Vector3(0.0, 0.0, 0.14), sleeve_mat)
-	# Puño de manga/brazalete
-	_add_part(Vector3(0.12, 0.12, 0.05), Vector3(0.0, 0.0, 0.03), cuff_mat)
-	# Antebrazo/muñeca mono
-	_add_part(Vector3(0.095, 0.095, 0.08), Vector3(0.0, 0.0, -0.03), skin_mat)
-	# Puñito cerrado redondeado (bloque principal + nudillos frontales + pulgar)
-	_add_part(Vector3(0.13, 0.12, 0.13), Vector3(0.0, 0.005, -0.12), skin_mat)
-	_add_part(Vector3(0.11, 0.09, 0.04), Vector3(0.0, 0.01, -0.19), skin_mat)
-	_thumb_mesh = _add_part(Vector3(0.045, 0.055, 0.07), Vector3(-0.042, 0.075, -0.11), skin_mat)
+	_head = Node3D.new()
+	_head.name = "Head"
+	_head.position = Vector3(0, 1.52, 0)
+	_body.add_child(_head)
+	
+	_camera = Camera3D.new()
+	_camera.name = "FirstPersonCamera"
+	_camera.fov = 75.0
+	_camera.current = true
+	_head.add_child(_camera)
+	
+	# Linterna / antorcha ambiental del explorador
+	var torch := OmniLight3D.new()
+	torch.light_color = Color(1.0, 0.84, 0.62)
+	torch.light_energy = 2.4
+	torch.omni_range = 14.0
+	torch.omni_attenuation = 1.35
+	torch.position = Vector3(0.0, -0.1, -0.2)
+	_camera.add_child(torch)
+	
+	# Pivotes de ambas manos frente a la cámara
+	_left_hand_pivot = Node3D.new()
+	_left_hand_pivot.name = "LeftHandSlot"
+	_left_hand_pivot.position = _left_hand_base_pos
+	_camera.add_child(_left_hand_pivot)
+	
+	_right_hand_pivot = Node3D.new()
+	_right_hand_pivot.name = "RightHandSlot"
+	_right_hand_pivot.position = _right_hand_base_pos
+	_camera.add_child(_right_hand_pivot)
 
-func _add_part(box_size: Vector3, pos: Vector3, mat: StandardMaterial3D) -> MeshInstance3D:
-	var mesh := BoxMesh.new()
-	mesh.size = box_size
-	mesh.material = mat
-	var inst := MeshInstance3D.new()
-	inst.mesh = mesh
-	inst.position = pos
-	_arm_pivot.add_child(inst)
-	return inst
+func spawn_at(world_pos: Vector3) -> void:
+	if _body:
+		_body.global_position = world_pos + Vector3(0, 0.15, 0)
+		_body.velocity = Vector3.ZERO
+	_is_dead = false
+	_invuln_timer = 0.5
+	_current_health = max_health
+	health_changed.emit(_current_health, max_health, false)
+	_ensure_unarmed_fallback()
 
-func _on_attack_start() -> void:
-	_punch_anim_timer = 0.24
-	_hit_applied = false
-	_play_punch_whoosh()
+func clear_weapons() -> void:
+	if is_instance_valid(_left_weapon):
+		_left_weapon.queue_free()
+	_left_weapon = null
+	if is_instance_valid(_right_weapon):
+		_right_weapon.queue_free()
+	_right_weapon = null
 
-func _update_weapon_animation(delta: float) -> void:
-	if _punch_anim_timer > 0.0:
-		_punch_anim_timer -= delta
-		var t := 1.0 - (_punch_anim_timer / 0.24)
+func equip_weapon(weapon: WeaponBase, left_slot: bool = false) -> void:
+	if not weapon:
+		return
+	weapon.is_left_hand = left_slot
+	if weapon.has_method("set_handedness"):
+		weapon.set_handedness(left_slot)
 		
-		# Ejecutamos el impacto en el punto máximo del puñetazo
-		if t >= 0.35 and not _hit_applied:
-			_hit_applied = true
-			_perform_punch_hit()
-			
-		if t < 0.45:
-			var f := t / 0.45
-			_arm_pivot.position.z = lerpf(0.0, -0.34, f)
-			_arm_pivot.position.y = lerpf(0.0, 0.04, f)
-			_arm_pivot.rotation_degrees.x = lerpf(0.0, -14.0, f)
-		else:
-			var r := (t - 0.45) / 0.55
-			_arm_pivot.position.z = lerpf(-0.34, 0.0, r)
-			_arm_pivot.position.y = lerpf(0.04, 0.0, r)
-			_arm_pivot.rotation_degrees.x = lerpf(-14.0, 0.0, r)
+	if left_slot:
+		if is_instance_valid(_left_weapon):
+			_left_weapon.queue_free()
+		_left_weapon = weapon
+		_left_hand_pivot.add_child(weapon)
 	else:
-		_arm_pivot.position = _arm_pivot.position.lerp(Vector3.ZERO, delta * 14.0)
-		_arm_pivot.rotation_degrees = _arm_pivot.rotation_degrees.lerp(Vector3.ZERO, delta * 14.0)
+		if is_instance_valid(_right_weapon):
+			_right_weapon.queue_free()
+		_right_weapon = weapon
+		_right_hand_pivot.add_child(weapon)
 
-func _perform_punch_hit() -> void:
-	var cam := get_viewport().get_camera_3d()
-	if not cam:
+## Si una mano queda vacía (al empezar, al gastar las dagas o al romperse un escudo), equipa Puñitos
+func _ensure_unarmed_fallback() -> void:
+	if not _left_hand_pivot or not _right_hand_pivot:
 		return
 		
-	var origin := cam.global_position
-	var forward := -cam.global_transform.basis.z
-	var reach := 1.95
-	
-	# Comprobación por raycast directo frente a la cámara (muy preciso para enemigos y jarrones)
-	var space := get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(origin, origin + forward * reach)
-	query.collide_with_areas = false
-	query.collide_with_bodies = true
-	
-	var player_body := _find_player_body()
-	if player_body:
-		query.exclude = [player_body.get_rid()]
+	if not is_instance_valid(_left_weapon) or _left_weapon.is_queued_for_deletion():
+		_left_weapon = null
+		var left_fist := BareFists.new()
+		equip_weapon(left_fist, true)
 		
-	var hit := space.intersect_ray(query)
-	if hit and hit.has("collider"):
-		var target: Object = hit["collider"]
-		if target and target.has_method("take_damage"):
-			target.take_damage(get_attack_damage(), global_position)
-			_play_punch_thud()
+	if not is_instance_valid(_right_weapon) or _right_weapon.is_queued_for_deletion():
+		_right_weapon = null
+		var right_fist := BareFists.new()
+		equip_weapon(right_fist, false)
+
+func take_damage(amount: float, hit_from: Vector3 = Vector3.ZERO) -> void:
+	if _is_dead or _invuln_timer > 0.0:
+		return
+		
+	var remaining_damage := amount
+	
+	# Si llevamos uno o dos escudos equipados, absorben daño pasivamente antes que la vida
+	if is_instance_valid(_left_weapon) and not _left_weapon.is_queued_for_deletion() and _left_weapon.has_method("absorb_damage"):
+		remaining_damage = _left_weapon.absorb_damage(remaining_damage)
+		
+	if remaining_damage > 0.0 and is_instance_valid(_right_weapon) and not _right_weapon.is_queued_for_deletion() and _right_weapon.has_method("absorb_damage"):
+		remaining_damage = _right_weapon.absorb_damage(remaining_damage)
+		
+	_invuln_timer = 0.45
+	
+	if _body and hit_from != Vector3.ZERO:
+		var push := (_body.global_position - hit_from)
+		push.y = 0.0
+		if push.length() > 0.01:
+			_body.velocity += push.normalized() * 4.5 + Vector3(0, 2.0, 0)
+			
+	if remaining_damage > 0.0:
+		_current_health = maxf(0.0, _current_health - remaining_damage)
+		health_changed.emit(_current_health, max_health, true)
+		
+	if _current_health <= 0.0:
+		_is_dead = true
+		died.emit()
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		if _body and _head:
+			_body.rotate_y(-event.relative.x * mouse_sensitivity)
+			_head.rotate_x(-event.relative.y * mouse_sensitivity)
+			_head.rotation.x = clampf(_head.rotation.x, deg_to_rad(-85.0), deg_to_rad(85.0))
+			
+	elif event is InputEventMouseButton and event.pressed:
+		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 			return
+		if _is_dead:
+			return
+		if event.button_index == MOUSE_BUTTON_LEFT and is_instance_valid(_left_weapon):
+			_left_weapon.trigger_use()
+		elif event.button_index == MOUSE_BUTTON_RIGHT and is_instance_valid(_right_weapon):
+			_right_weapon.trigger_use()
 			
-	# Respaldo en cono corto cuerpo a cuerpo por si el objetivo está ligeramente descentrado
-	var scene_root := get_tree().current_scene
-	if not scene_root:
+	elif event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_ESCAPE:
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
+
+func _physics_process(delta: float) -> void:
+	if not _body:
 		return
-	for candidate in _find_damageable_nodes(scene_root):
-		if candidate == player_body or (player_body and candidate == player_body.get_parent()):
-			continue
-		var to_cand := candidate.global_position + Vector3(0, 0.5, 0) - origin
-		var dist := to_cand.length()
-		if dist <= reach and dist > 0.01:
-			if forward.dot(to_cand.normalized()) >= 0.78:
-				candidate.take_damage(get_attack_damage(), global_position)
-				_play_punch_thud()
-				break
-
-func _find_damageable_nodes(root: Node) -> Array[Node3D]:
-	var result: Array[Node3D] = []
-	for child in root.get_children():
-		if child is Node3D and child.has_method("take_damage"):
-			result.append(child)
-		result.append_array(_find_damageable_nodes(child))
-	return result
-
-func _find_player_body() -> CollisionObject3D:
-	var root := get_tree().current_scene
-	if not root:
-		return null
-	return root.find_child("PlayerBody", true, false) as CollisionObject3D
-
-func _play_punch_whoosh() -> void:
-	_play_synth_sound(280.0, 110.0, 0.07, -14.0, false)
-
-func _play_punch_thud() -> void:
-	_play_synth_sound(160.0, 52.0, 0.10, -10.0, true)
-
-func _play_synth_sound(f_start: float, f_end: float, dur: float, vol_db: float, square: bool) -> void:
-	var audio := AudioStreamPlayer3D.new()
-	var gen := AudioStreamGenerator.new()
-	gen.mix_rate = 22050.0
-	gen.buffer_length = 0.2
-	audio.stream = gen
-	audio.volume_db = vol_db
-	add_child(audio)
-	audio.play()
+		
+	_ensure_unarmed_fallback()
 	
-	var pb := audio.get_stream_playback() as AudioStreamGeneratorPlayback
-	if pb:
-		var frames := int(gen.mix_rate * dur)
-		var phase := 0.0
-		for i in range(frames):
-			var t := float(i) / float(frames)
-			var freq := lerpf(f_start, f_end, t)
-			phase += freq / gen.mix_rate
-			var raw := (1.0 if fmod(phase, 1.0) < 0.5 else -1.0) if square else sin(phase * TAU)
-			var wave := raw * (1.0 - t) * 0.24
-			pb.push_frame(Vector2(wave, wave))
-			
-	get_tree().create_timer(0.25).timeout.connect(func() -> void:
-		if is_instance_valid(audio):
-			audio.queue_free()
-	)
+	if _invuln_timer > 0.0:
+		_invuln_timer -= delta
+		
+	if not _body.is_on_floor():
+		_body.velocity.y -= _gravity * delta
+		
+	if _is_dead:
+		_body.velocity.x = move_toward(_body.velocity.x, 0.0, 12.0 * delta)
+		_body.velocity.z = move_toward(_body.velocity.z, 0.0, 12.0 * delta)
+		_body.move_and_slide()
+		return
+		
+	if Input.is_key_pressed(KEY_SPACE) and _body.is_on_floor():
+		_body.velocity.y = jump_velocity
+		
+	var input_dir := Vector2.ZERO
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+		input_dir.y -= 1.0
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+		input_dir.y += 1.0
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+		input_dir.x -= 1.0
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+		input_dir.x += 1.0
+	input_dir = input_dir.normalized()
+	
+	var speed := sprint_speed if Input.is_key_pressed(KEY_SHIFT) else walk_speed
+	var direction := (_body.transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
+	
+	if direction.length() > 0.01:
+		_body.velocity.x = direction.x * speed
+		_body.velocity.z = direction.z * speed
+	else:
+		_body.velocity.x = move_toward(_body.velocity.x, 0.0, speed * 10.0 * delta)
+		_body.velocity.z = move_toward(_body.velocity.z, 0.0, speed * 10.0 * delta)
+		
+	_body.move_and_slide()
+	_animate_view_bob(delta, Vector2(_body.velocity.x, _body.velocity.z).length() > 0.3 and _body.is_on_floor())
 
-# --- TEXTURAS PIXELADAS ---
-
-func _create_skin_material() -> StandardMaterial3D:
-	var img := Image.create(8, 8, false, Image.FORMAT_RGB8)
-	var base := Color(0.96, 0.77, 0.62)
-	var shade := Color(0.88, 0.67, 0.52)
-	for y in range(8):
-		for x in range(8):
-			img.set_pixel(x, y, base if (x + y) % 3 != 0 else shade)
-	return _to_pixel_mat(img, 0.75)
-
-func _create_sleeve_material() -> StandardMaterial3D:
-	var img := Image.create(8, 8, false, Image.FORMAT_RGB8)
-	var cloth := Color(0.24, 0.36, 0.58)
-	var cloth_dark := Color(0.18, 0.27, 0.45)
-	for y in range(8):
-		for x in range(8):
-			img.set_pixel(x, y, cloth if (x + y) % 2 == 0 else cloth_dark)
-	return _to_pixel_mat(img, 0.88)
-
-func _create_cuff_material() -> StandardMaterial3D:
-	var img := Image.create(8, 8, false, Image.FORMAT_RGB8)
-	img.fill(Color(0.84, 0.68, 0.34))
-	return _to_pixel_mat(img, 0.6)
-
-func _to_pixel_mat(img: Image, rough: float) -> StandardMaterial3D:
-	var tex := ImageTexture.create_from_image(img)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_texture = tex
-	mat.roughness = rough
-	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	return mat
+func _animate_view_bob(delta: float, is_walking: bool) -> void:
+	if is_walking:
+		_bob_time += delta * 10.5
+		var bob_x: float = cos(_bob_time * 0.5) * 0.014
+		var bob_y: float = absf(sin(_bob_time)) * 0.018
+		_left_hand_pivot.position = _left_hand_base_pos + Vector3(bob_x, -bob_y, 0.0)
+		_right_hand_pivot.position = _right_hand_base_pos + Vector3(bob_x, -bob_y, 0.0)
+	else:
+		_left_hand_pivot.position = _left_hand_pivot.position.lerp(_left_hand_base_pos, delta * 10.0)
+		_right_hand_pivot.position = _right_hand_pivot.position.lerp(_right_hand_base_pos, delta * 10.0)

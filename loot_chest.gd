@@ -4,197 +4,248 @@ extends StaticBody3D
 ## Pool de armas disponibles para este cofre
 var weapon_pool: Array[GDScript] = [
 	WoodenSword,
-	WoodenDagger
+	WoodenDagger,
+	WoodenShield,
+	BasicFireStaff,
+	WoodenBoomerang
 ]
 
 var _lid_pivot: Node3D
 var _prompt_label: Label3D
-var _weapon_preview_pivot: Node3D
-var _player_in_range: Node3D = null
 var _is_open: bool = false
-var _is_looted: bool = false
-var _selected_weapon_script: GDScript
-var _preview_weapon_name: String = ""
-var _spin_time: float = 0.0
+var _player_in_range: bool = false
+var _offered_weapon: WeaponBase = null
+var _float_tween: Tween = null
 
 func _ready() -> void:
-	_pick_from_pool()
 	_build_chest_mesh()
 	_build_interaction_area()
-	_build_floating_prompt()
-
-func _pick_from_pool() -> void:
-	if weapon_pool.is_empty():
-		return
-	_selected_weapon_script = weapon_pool[randi() % weapon_pool.size()]
-	var temp_instance: WeaponBase = _selected_weapon_script.new()
-	_preview_weapon_name = temp_instance.weapon_name
-	temp_instance.queue_free()
+	_build_prompt_label()
 
 func _build_chest_mesh() -> void:
-	var wood_mat := _create_chest_wood_material()
-	var iron_mat := _create_iron_band_material()
-	var gold_mat := _create_lock_gold_material()
+	var wood_mat := _create_wood_material()
+	var iron_mat := _create_iron_material()
+	var gold_mat := _create_gold_material()
 	
+	# Colisión física del cofre
 	var col := CollisionShape3D.new()
-	var box_col := BoxShape3D.new()
-	box_col.size = Vector3(0.95, 0.72, 0.65)
-	col.shape = box_col
-	col.position = Vector3(0, 0.36, 0)
+	var box_shape := BoxShape3D.new()
+	box_shape.size = Vector3(1.1, 0.85, 0.75)
+	col.shape = box_shape
+	col.position = Vector3(0.0, 0.425, 0.0)
 	add_child(col)
 	
-	_add_box(self, Vector3(0.92, 0.44, 0.62), Vector3(0, 0.22, 0), wood_mat)
-	_add_box(self, Vector3(0.08, 0.45, 0.64), Vector3(-0.38, 0.225, 0), iron_mat)
-	_add_box(self, Vector3(0.08, 0.45, 0.64), Vector3(0.38, 0.225, 0), iron_mat)
+	# Base del cofre
+	var base := _make_box(Vector3(1.06, 0.52, 0.72), Vector3(0.0, 0.26, 0.0), wood_mat)
+	add_child(base)
 	
+	# Bandas metálicas en la base
+	add_child(_make_box(Vector3(0.08, 0.54, 0.75), Vector3(-0.38, 0.27, 0.0), iron_mat))
+	add_child(_make_box(Vector3(0.08, 0.54, 0.75), Vector3(0.38, 0.27, 0.0), iron_mat))
+	
+	# Cerradura dorada frontal
+	add_child(_make_box(Vector3(0.16, 0.18, 0.06), Vector3(0.0, 0.46, 0.37), gold_mat))
+	
+	# Pivote trasero de la tapa para abrirse hacia atrás
 	_lid_pivot = Node3D.new()
-	_lid_pivot.position = Vector3(0, 0.44, -0.31)
+	_lid_pivot.position = Vector3(0.0, 0.52, -0.36)
 	add_child(_lid_pivot)
 	
-	_add_box(_lid_pivot, Vector3(0.92, 0.24, 0.62), Vector3(0, 0.12, 0.31), wood_mat)
-	_add_box(_lid_pivot, Vector3(0.08, 0.25, 0.64), Vector3(-0.38, 0.125, 0.31), iron_mat)
-	_add_box(_lid_pivot, Vector3(0.08, 0.25, 0.64), Vector3(0.38, 0.125, 0.31), iron_mat)
-	_add_box(_lid_pivot, Vector3(0.14, 0.16, 0.06), Vector3(0, 0.02, 0.62), gold_mat)
-	
-	_weapon_preview_pivot = Node3D.new()
-	_weapon_preview_pivot.position = Vector3(0, 0.85, 0)
-	_weapon_preview_pivot.visible = false
-	add_child(_weapon_preview_pivot)
+	var lid := _make_box(Vector3(1.08, 0.28, 0.74), Vector3(0.0, 0.14, 0.36), wood_mat)
+	_lid_pivot.add_child(lid)
+	_lid_pivot.add_child(_make_box(Vector3(0.08, 0.30, 0.76), Vector3(-0.38, 0.15, 0.36), iron_mat))
+	_lid_pivot.add_child(_make_box(Vector3(0.08, 0.30, 0.76), Vector3(0.38, 0.15, 0.36), iron_mat))
 
-func _add_box(parent: Node3D, s: Vector3, pos: Vector3, mat: StandardMaterial3D) -> void:
-	var mesh := BoxMesh.new()
-	mesh.size = s
-	mesh.material = mat
+func _make_box(box_size: Vector3, pos: Vector3, mat: StandardMaterial3D) -> MeshInstance3D:
+	var m := BoxMesh.new()
+	m.size = box_size
+	m.material = mat
 	var inst := MeshInstance3D.new()
-	inst.mesh = mesh
+	inst.mesh = m
 	inst.position = pos
-	parent.add_child(inst)
+	return inst
 
 func _build_interaction_area() -> void:
 	var area := Area3D.new()
+	area.monitoring = true
+	area.monitorable = false
 	add_child(area)
 	
 	var col := CollisionShape3D.new()
 	var sphere := SphereShape3D.new()
-	sphere.radius = 2.3
+	sphere.radius = 2.4
 	col.shape = sphere
-	col.position = Vector3(0, 0.5, 0)
+	col.position = Vector3(0.0, 0.6, 0.0)
 	area.add_child(col)
 	
 	area.body_entered.connect(_on_body_entered)
 	area.body_exited.connect(_on_body_exited)
 
-func _build_floating_prompt() -> void:
+func _build_prompt_label() -> void:
 	_prompt_label = Label3D.new()
-	_prompt_label.position = Vector3(0, 1.35, 0)
+	_prompt_label.text = "[E] Abrir Cofre"
+	_prompt_label.position = Vector3(0.0, 1.35, 0.0)
 	_prompt_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	_prompt_label.pixel_size = 0.0045
-	_prompt_label.font_size = 36
+	_prompt_label.no_depth_test = true
+	_prompt_label.pixel_size = 0.004
+	_prompt_label.font_size = 34
 	_prompt_label.outline_size = 8
-	_prompt_label.modulate = Color(1.0, 0.95, 0.75)
-	_prompt_label.text = "[E] Abrir cofre"
+	_prompt_label.modulate = Color(1.0, 0.92, 0.55)
 	_prompt_label.visible = false
 	add_child(_prompt_label)
 
 func _on_body_entered(body: Node3D) -> void:
-	if body.get_parent() and body.get_parent().has_method("equip_weapon"):
-		_player_in_range = body.get_parent()
+	if _is_player_node(body):
+		_player_in_range = true
 		_update_prompt()
 
 func _on_body_exited(body: Node3D) -> void:
-	if body.get_parent() == _player_in_range:
-		_player_in_range = null
-		_prompt_label.visible = false
+	if _is_player_node(body):
+		_player_in_range = false
+		_update_prompt()
+
+func _is_player_node(node: Node) -> bool:
+	if not node:
+		return false
+	return node.name == "PlayerBody" or (node.get_parent() and node.get_parent().has_method("equip_weapon"))
 
 func _update_prompt() -> void:
-	if not _player_in_range or _is_looted:
+	if not _player_in_range:
 		_prompt_label.visible = false
 		return
-		
 	_prompt_label.visible = true
 	if not _is_open:
-		_prompt_label.text = "[E] Abrir cofre"
+		_prompt_label.text = "[E] Abrir Cofre"
+	elif is_instance_valid(_offered_weapon):
+		_prompt_label.text = "%s\n[1] Mano Izq.   [2] Mano Der." % _offered_weapon.weapon_name
 	else:
-		_prompt_label.text = "%s\n[1] Mano Izq.   [2] Mano Der." % _preview_weapon_name
+		_prompt_label.visible = false
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not _player_in_range or _is_looted:
+	if not _player_in_range:
 		return
-		
 	if event is InputEventKey and event.pressed and not event.echo:
 		if not _is_open and event.keycode == KEY_E:
 			_open_chest()
-		elif _is_open:
-			if event.keycode == KEY_1:
+		elif _is_open and is_instance_valid(_offered_weapon):
+			if event.keycode == KEY_1 or event.keycode == KEY_KP_1:
 				_give_weapon_to_player(true)
-			elif event.keycode == KEY_2:
+			elif event.keycode == KEY_2 or event.keycode == KEY_KP_2:
 				_give_weapon_to_player(false)
 
 func _open_chest() -> void:
 	_is_open = true
-	_update_prompt()
+	_play_chest_creak()
 	
-	if _selected_weapon_script:
-		var preview: WeaponBase = _selected_weapon_script.new()
-		preview.scale = Vector3(0.85, 0.85, 0.85)
-		_weapon_preview_pivot.add_child(preview)
-		_weapon_preview_pivot.visible = true
-
-func _give_weapon_to_player(left_slot: bool) -> void:
-	if not _selected_weapon_script or not _player_in_range:
+	# Animación suave de apertura de la tapa
+	var tween := create_tween()
+	tween.tween_property(_lid_pivot, "rotation_degrees:x", -68.0, 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	
+	if weapon_pool.is_empty():
 		return
+	var chosen_script: GDScript = weapon_pool[randi() % weapon_pool.size()]
+	_offered_weapon = chosen_script.new() as WeaponBase
+	if _offered_weapon:
+		_offered_weapon.position = Vector3(0.0, 0.85, 0.0)
+		_offered_weapon.rotation_degrees = Vector3(0.0, 0.0, -35.0)
+		add_child(_offered_weapon)
 		
-	var new_weapon: WeaponBase = _selected_weapon_script.new()
-	_player_in_range.equip_weapon(new_weapon, left_slot)
-	
-	_is_looted = true
-	_weapon_preview_pivot.visible = false
-	_prompt_label.visible = false
+		# Guardamos el tween de flotación para poder matarlo al recoger el arma
+		_float_tween = create_tween().set_loops()
+		_float_tween.tween_property(_offered_weapon, "position:y", 1.0, 0.8).set_trans(Tween.TRANS_SINE)
+		_float_tween.tween_property(_offered_weapon, "position:y", 0.82, 0.8).set_trans(Tween.TRANS_SINE)
+		
+	_update_prompt()
 
 func _process(delta: float) -> void:
-	var target_lid_x := deg_to_rad(-68.0) if _is_open else 0.0
-	_lid_pivot.rotation.x = lerpf(_lid_pivot.rotation.x, target_lid_x, delta * 8.0)
+	if _is_open and is_instance_valid(_offered_weapon):
+		_offered_weapon.rotation.y += delta * 1.8
+
+func _give_weapon_to_player(left_hand: bool) -> void:
+	var player := _find_player_root()
+	if not player or not is_instance_valid(_offered_weapon):
+		return
+		
+	# IMPORTANTE: Matamos el tween del cofre para que no siga moviendo position.y en tu mano
+	if _float_tween and _float_tween.is_valid():
+		_float_tween.kill()
+	_float_tween = null
+		
+	var weapon_to_equip := _offered_weapon
+	_offered_weapon = null
+	remove_child(weapon_to_equip)
 	
-	if _weapon_preview_pivot.visible:
-		_spin_time += delta
-		_weapon_preview_pivot.rotation.y += delta * 2.2
-		_weapon_preview_pivot.position.y = 0.85 + sin(_spin_time * 3.0) * 0.06
+	weapon_to_equip.position = Vector3.ZERO
+	weapon_to_equip.rotation = Vector3.ZERO
+	weapon_to_equip.scale = Vector3.ONE
+	
+	player.equip_weapon(weapon_to_equip, left_hand)
+	_update_prompt()
 
-# --- TEXTURAS PIXELADAS DEL COFRE ---
+func _find_player_root() -> Node:
+	var root := get_tree().current_scene
+	if not root:
+		return null
+	return _search_equipper(root)
 
-func _create_chest_wood_material() -> StandardMaterial3D:
+func _search_equipper(node: Node) -> Node:
+	if node.has_method("equip_weapon"):
+		return node
+	for child in node.get_children():
+		var found := _search_equipper(child)
+		if found:
+			return found
+	return null
+
+func _play_chest_creak() -> void:
+	var audio := AudioStreamPlayer3D.new()
+	var gen := AudioStreamGenerator.new()
+	gen.mix_rate = 22050.0
+	gen.buffer_length = 0.25
+	audio.stream = gen
+	audio.volume_db = -10.0
+	add_child(audio)
+	audio.global_position = global_position + Vector3(0, 0.6, 0)
+	audio.play()
+	
+	var pb := audio.get_stream_playback() as AudioStreamGeneratorPlayback
+	if pb:
+		var frames := int(gen.mix_rate * 0.16)
+		var phase := 0.0
+		for i in range(frames):
+			var t := float(i) / float(frames)
+			phase += lerpf(160.0, 290.0, t) / gen.mix_rate
+			var wave := sin(phase * TAU) * (1.0 - t) * 0.22
+			pb.push_frame(Vector2(wave, wave))
+			
+	get_tree().create_timer(0.3).timeout.connect(func() -> void:
+		if is_instance_valid(audio):
+			audio.queue_free()
+	)
+
+func _create_wood_material() -> StandardMaterial3D:
 	var img := Image.create(16, 16, false, Image.FORMAT_RGB8)
-	var plank_a := Color(0.48, 0.28, 0.14)
-	var plank_b := Color(0.41, 0.23, 0.11)
-	var seam := Color(0.22, 0.11, 0.05)
+	var base := Color(0.42, 0.25, 0.13)
+	var dark := Color(0.28, 0.16, 0.08)
 	for y in range(16):
 		for x in range(16):
-			if y % 4 == 0:
-				img.set_pixel(x, y, seam)
-			else:
-				img.set_pixel(x, y, plank_a if ((x + y) % 2 == 0) else plank_b)
-	return _to_pixel_mat(img)
+			img.set_pixel(x, y, dark if y % 4 == 0 else base)
+	return _to_pixel_mat(img, 0.85)
 
-func _create_iron_band_material() -> StandardMaterial3D:
+func _create_iron_material() -> StandardMaterial3D:
 	var img := Image.create(8, 8, false, Image.FORMAT_RGB8)
-	var iron := Color(0.24, 0.26, 0.30)
-	var rivet := Color(0.45, 0.48, 0.54)
-	img.fill(iron)
-	img.set_pixel(3, 2, rivet)
-	img.set_pixel(3, 5, rivet)
-	return _to_pixel_mat(img)
+	img.fill(Color(0.24, 0.26, 0.30))
+	return _to_pixel_mat(img, 0.6)
 
-func _create_lock_gold_material() -> StandardMaterial3D:
+func _create_gold_material() -> StandardMaterial3D:
 	var img := Image.create(8, 8, false, Image.FORMAT_RGB8)
-	img.fill(Color(0.92, 0.74, 0.22))
-	img.set_pixel(3, 4, Color(0.15, 0.12, 0.08))
-	img.set_pixel(4, 4, Color(0.15, 0.12, 0.08))
-	return _to_pixel_mat(img)
+	img.fill(Color(0.95, 0.78, 0.22))
+	return _to_pixel_mat(img, 0.4)
 
-func _to_pixel_mat(img: Image) -> StandardMaterial3D:
+func _to_pixel_mat(img: Image, rough: float) -> StandardMaterial3D:
 	var tex := ImageTexture.create_from_image(img)
 	var mat := StandardMaterial3D.new()
 	mat.albedo_texture = tex
-	mat.roughness = 0.85
+	mat.roughness = rough
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	return mat

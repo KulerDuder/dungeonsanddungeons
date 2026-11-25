@@ -112,7 +112,7 @@ func _play_coin_pickup_sound() -> void:
 	gen.mix_rate = 22050.0
 	gen.buffer_length = 0.22
 	audio.stream = gen
-	audio.volume_db = -12.0
+	audio.volume_db = -29.0
 	scene_root.add_child(audio)
 	audio.play()
 	

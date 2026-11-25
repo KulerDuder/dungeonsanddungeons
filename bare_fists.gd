@@ -2,8 +2,11 @@ class_name BareFists
 extends WeaponBase
 
 var _arm_pivot: Node3D
+var _fist_root: Node3D
+var _thumb_group: Node3D
 var _punch_anim_timer: float = 0.0
 var _hit_applied: bool = false
+var _is_left_hand: bool = false
 
 func _init() -> void:
 	weapon_name = "Puñitos"
@@ -11,35 +14,79 @@ func _init() -> void:
 	cooldown = 0.36
 
 func _ready() -> void:
-	_build_cute_fist_mesh()
+	_build_realistic_voxel_fist()
+	_apply_handedness()
 
-func _build_cute_fist_mesh() -> void:
+func set_handedness(is_left: bool) -> void:
+	_is_left_hand = is_left
+	_apply_handedness()
+
+func _apply_handedness() -> void:
+	if not _fist_root:
+		return
+	var sign_x := -1.0 if _is_left_hand else 1.0
+	# Postura natural de guardia: los puños apuntan ligeramente hacia el centro
+	_fist_root.rotation_degrees = Vector3(12.0, -18.0 * sign_x, 14.0 * sign_x)
+	if _thumb_group:
+		# El pulgar siempre queda en el lado interior (hacia el centro de la pantalla)
+		_thumb_group.scale.x = -1.0 if _is_left_hand else 1.0
+
+func _build_realistic_voxel_fist() -> void:
 	_arm_pivot = Node3D.new()
 	add_child(_arm_pivot)
 	
-	var skin_mat := _create_skin_material()
-	var sleeve_mat := _create_sleeve_material()
-	var cuff_mat := _create_cuff_material()
+	_fist_root = Node3D.new()
+	_arm_pivot.add_child(_fist_root)
 	
-	# Manga de túnica atrás
-	_add_part(Vector3(0.11, 0.11, 0.18), Vector3(0.0, 0.0, 0.14), sleeve_mat)
-	# Puño de manga/brazalete
-	_add_part(Vector3(0.12, 0.12, 0.05), Vector3(0.0, 0.0, 0.03), cuff_mat)
-	# Antebrazo/muñeca mono
-	_add_part(Vector3(0.095, 0.095, 0.08), Vector3(0.0, 0.0, -0.03), skin_mat)
-	# Puñito cerrado redondeado (bloque principal + nudillos frontales + pulgar)
-	_add_part(Vector3(0.13, 0.12, 0.13), Vector3(0.0, 0.005, -0.12), skin_mat)
-	_add_part(Vector3(0.11, 0.09, 0.04), Vector3(0.0, 0.01, -0.19), skin_mat)
-	_add_part(Vector3(0.045, 0.055, 0.07), Vector3(0.0, 0.075, -0.11), skin_mat)
+	var back_hand_mat := _create_knuckle_back_material()
+	var finger_mat := _create_curled_fingers_material()
+	var palm_mat := _create_palm_crease_material()
+	var wrist_mat := _create_wrist_skin_material()
+	
+	# 1. Muñeca corta y compacta (sin ropa, solo piel)
+	_add_part(_fist_root, Vector3(0.095, 0.085, 0.11), Vector3(0.0, -0.02, 0.09), wrist_mat)
+	
+	# 2. Dorso de la mano / metacarpo (ancho y corto)
+	_add_part(_fist_root, Vector3(0.135, 0.095, 0.115), Vector3(0.0, 0.005, -0.01), back_hand_mat)
+	
+	# 3. Fila de 4 nudillos marcados en el borde frontal superior
+	var knuckle_offsets := [-0.048, -0.016, 0.016, 0.048]
+	for kx in knuckle_offsets:
+		_add_part(_fist_root, Vector3(0.028, 0.032, 0.035), Vector3(kx, 0.036, -0.072), back_hand_mat)
+	
+	# 4. Cuatro dedos doblados individualmente con ranuras entre ellos
+	var finger_widths := [0.029, 0.031, 0.030, 0.026]
+	var finger_heights := [0.068, 0.074, 0.070, 0.060]
+	for i in range(4):
+		var fx: float = knuckle_offsets[i]
+		var fh: float = finger_heights[i]
+		# Falange frontal vertical doblada
+		_add_part(_fist_root, Vector3(finger_widths[i], fh, 0.036), Vector3(fx, 0.002, -0.082), finger_mat)
+		# Punta del dedo metida hacia la palma por debajo
+		_add_part(_fist_root, Vector3(finger_widths[i], 0.026, 0.045), Vector3(fx, -0.036, -0.056), palm_mat)
+	
+	# 5. Almohadilla inferior de la palma (donde se apoyan los dedos cerrados)
+	_add_part(_fist_root, Vector3(0.125, 0.042, 0.085), Vector3(0.0, -0.032, -0.015), palm_mat)
+	
+	# 6. Pulgar doblado cruzando por delante/abajo de los dedos índice y corazón
+	_thumb_group = Node3D.new()
+	_fist_root.add_child(_thumb_group)
+	
+	# Base del pulgar en el lateral interior
+	_add_part(_thumb_group, Vector3(0.038, 0.045, 0.065), Vector3(-0.074, -0.012, -0.022), wrist_mat)
+	# Falange del pulgar doblada cerrando el puño por delante
+	var thumb_tip := _add_part(_thumb_group, Vector3(0.075, 0.034, 0.034), Vector3(-0.036, -0.024, -0.088), finger_mat)
+	thumb_tip.rotation_degrees = Vector3(0.0, -14.0, -10.0)
 
-func _add_part(box_size: Vector3, pos: Vector3, mat: StandardMaterial3D) -> void:
+func _add_part(parent: Node3D, box_size: Vector3, pos: Vector3, mat: StandardMaterial3D) -> MeshInstance3D:
 	var mesh := BoxMesh.new()
 	mesh.size = box_size
 	mesh.material = mat
 	var inst := MeshInstance3D.new()
 	inst.mesh = mesh
 	inst.position = pos
-	_arm_pivot.add_child(inst)
+	parent.add_child(inst)
+	return inst
 
 func _on_attack_start() -> void:
 	_punch_anim_timer = 0.24
@@ -47,25 +94,30 @@ func _on_attack_start() -> void:
 	_play_punch_whoosh()
 
 func _update_weapon_animation(delta: float) -> void:
+	var sign_x := -1.0 if _is_left_hand else 1.0
 	if _punch_anim_timer > 0.0:
 		_punch_anim_timer -= delta
 		var t := 1.0 - (_punch_anim_timer / 0.24)
 		
-		# Ejecutamos el impacto en el punto máximo del puñetazo
 		if t >= 0.35 and not _hit_applied:
 			_hit_applied = true
 			_perform_punch_hit()
 			
 		if t < 0.45:
 			var f := t / 0.45
-			_arm_pivot.position.z = lerpf(0.0, -0.34, f)
-			_arm_pivot.position.y = lerpf(0.0, 0.04, f)
-			_arm_pivot.rotation_degrees.x = lerpf(0.0, -14.0, f)
+			# Directo hacia el centro de la mira girando ligeramente el puño en horizontal
+			_arm_pivot.position.z = lerpf(0.0, -0.36, f)
+			_arm_pivot.position.x = lerpf(0.0, -0.10 * sign_x, f)
+			_arm_pivot.position.y = lerpf(0.0, 0.05, f)
+			_arm_pivot.rotation_degrees.x = lerpf(0.0, -16.0, f)
+			_arm_pivot.rotation_degrees.z = lerpf(0.0, 28.0 * sign_x, f)
 		else:
 			var r := (t - 0.45) / 0.55
-			_arm_pivot.position.z = lerpf(-0.34, 0.0, r)
-			_arm_pivot.position.y = lerpf(0.04, 0.0, r)
-			_arm_pivot.rotation_degrees.x = lerpf(-14.0, 0.0, r)
+			_arm_pivot.position.z = lerpf(-0.36, 0.0, r)
+			_arm_pivot.position.x = lerpf(-0.10 * sign_x, 0.0, r)
+			_arm_pivot.position.y = lerpf(0.05, 0.0, r)
+			_arm_pivot.rotation_degrees.x = lerpf(-16.0, 0.0, r)
+			_arm_pivot.rotation_degrees.z = lerpf(28.0 * sign_x, 0.0, r)
 	else:
 		_arm_pivot.position = _arm_pivot.position.lerp(Vector3.ZERO, delta * 14.0)
 		_arm_pivot.rotation_degrees = _arm_pivot.rotation_degrees.lerp(Vector3.ZERO, delta * 14.0)
@@ -79,7 +131,6 @@ func _perform_punch_hit() -> void:
 	var forward := -cam.global_transform.basis.z
 	var reach := 1.95
 	
-	# Comprobación por raycast directo frente a la cámara (muy preciso para enemigos y jarrones)
 	var space := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(origin, origin + forward * reach)
 	query.collide_with_areas = false
@@ -97,7 +148,6 @@ func _perform_punch_hit() -> void:
 			_play_punch_thud()
 			return
 			
-	# Respaldo en cono corto cuerpo a cuerpo por si el objetivo está ligeramente descentrado
 	var scene_root := get_tree().current_scene
 	if not scene_root:
 		return
@@ -127,10 +177,10 @@ func _find_player_body() -> CollisionObject3D:
 	return root.find_child("PlayerBody", true, false) as CollisionObject3D
 
 func _play_punch_whoosh() -> void:
-	_play_synth_sound(280.0, 110.0, 0.07, -14.0, false)
+	_play_synth_sound(280.0, 110.0, 0.07, -34.0, false)
 
 func _play_punch_thud() -> void:
-	_play_synth_sound(160.0, 52.0, 0.10, -10.0, true)
+	_play_synth_sound(160.0, 52.0, 0.10, -30.0, true)
 
 func _play_synth_sound(f_start: float, f_end: float, dur: float, vol_db: float, square: bool) -> void:
 	var audio := AudioStreamPlayer3D.new()
@@ -159,30 +209,79 @@ func _play_synth_sound(f_start: float, f_end: float, dur: float, vol_db: float, 
 			audio.queue_free()
 	)
 
-# --- TEXTURAS PIXELADAS ---
+# --- TEXTURAS PIXEL-ART ANATÓMICAS (16x16) ---
 
-func _create_skin_material() -> StandardMaterial3D:
-	var img := Image.create(8, 8, false, Image.FORMAT_RGB8)
-	var base := Color(0.96, 0.77, 0.62)
-	var shade := Color(0.88, 0.67, 0.52)
-	for y in range(8):
-		for x in range(8):
-			img.set_pixel(x, y, base if (x + y) % 3 != 0 else shade)
-	return _to_pixel_mat(img, 0.75)
+func _create_knuckle_back_material() -> StandardMaterial3D:
+	# Dorso de la mano con luces en los nudillos y sombras cálidas en los bordes
+	var img := Image.create(16, 16, false, Image.FORMAT_RGB8)
+	var skin_base := Color(0.93, 0.72, 0.56)
+	var skin_hi := Color(0.99, 0.83, 0.68)
+	var skin_shade := Color(0.79, 0.57, 0.42)
+	var tendon := Color(0.86, 0.64, 0.48)
+	
+	for y in range(16):
+		for x in range(16):
+			if x == 0 or x == 15 or y == 15:
+				img.set_pixel(x, y, skin_shade)
+			elif y <= 3 and (x % 4 == 1 or x % 4 == 2):
+				# Brillo en los 4 nudillos
+				img.set_pixel(x, y, skin_hi)
+			elif y >= 4 and y <= 10 and (x == 4 or x == 8 or x == 12):
+				# Surco sutil de tendones entre nudillos
+				img.set_pixel(x, y, tendon)
+			elif (x + y) % 4 == 0:
+				img.set_pixel(x, y, skin_hi)
+			else:
+				img.set_pixel(x, y, skin_base)
+	return _to_pixel_mat(img, 0.72)
 
-func _create_sleeve_material() -> StandardMaterial3D:
-	var img := Image.create(8, 8, false, Image.FORMAT_RGB8)
-	var cloth := Color(0.24, 0.36, 0.58)
-	var cloth_dark := Color(0.18, 0.27, 0.45)
-	for y in range(8):
-		for x in range(8):
-			img.set_pixel(x, y, cloth if (x + y) % 2 == 0 else cloth_dark)
-	return _to_pixel_mat(img, 0.88)
+func _create_curled_fingers_material() -> StandardMaterial3D:
+	# Falanges dobladas con pliegue articular horizontal en medio y sombra profunda abajo
+	var img := Image.create(16, 16, false, Image.FORMAT_RGB8)
+	var skin_base := Color(0.91, 0.69, 0.53)
+	var skin_hi := Color(0.98, 0.80, 0.64)
+	var crease := Color(0.64, 0.42, 0.29)
+	var deep_shadow := Color(0.50, 0.31, 0.21)
+	
+	for y in range(16):
+		for x in range(16):
+			if x == 0 or x == 15:
+				img.set_pixel(x, y, crease)
+			elif y >= 13:
+				img.set_pixel(x, y, deep_shadow)
+			elif y == 7 or y == 8:
+				# Pliegue de la falange al doblar el dedo
+				img.set_pixel(x, y, crease)
+			elif y <= 2 or y == 9:
+				img.set_pixel(x, y, skin_hi)
+			else:
+				img.set_pixel(x, y, skin_base)
+	return _to_pixel_mat(img, 0.76)
 
-func _create_cuff_material() -> StandardMaterial3D:
-	var img := Image.create(8, 8, false, Image.FORMAT_RGB8)
-	img.fill(Color(0.84, 0.68, 0.34))
-	return _to_pixel_mat(img, 0.6)
+func _create_palm_crease_material() -> StandardMaterial3D:
+	# Interior de la palma en sombra cálida con líneas de la mano
+	var img := Image.create(16, 16, false, Image.FORMAT_RGB8)
+	var palm_base := Color(0.76, 0.53, 0.39)
+	var palm_line := Color(0.55, 0.35, 0.24)
+	for y in range(16):
+		for x in range(16):
+			if y == 5 or y == 10 or (x == y and x > 3 and x < 12):
+				img.set_pixel(x, y, palm_line)
+			else:
+				img.set_pixel(x, y, palm_base)
+	return _to_pixel_mat(img, 0.82)
+
+func _create_wrist_skin_material() -> StandardMaterial3D:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGB8)
+	var skin := Color(0.88, 0.66, 0.50)
+	var shade := Color(0.75, 0.53, 0.39)
+	for y in range(16):
+		for x in range(16):
+			if x <= 1 or x >= 14 or y >= 13:
+				img.set_pixel(x, y, shade)
+			else:
+				img.set_pixel(x, y, skin if (x + y) % 3 != 0 else shade)
+	return _to_pixel_mat(img, 0.78)
 
 func _to_pixel_mat(img: Image, rough: float) -> StandardMaterial3D:
 	var tex := ImageTexture.create_from_image(img)

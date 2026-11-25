@@ -15,9 +15,11 @@ extends Node3D
 @export var pot_coin_chance: float = 0.25
 
 var enemy_pool: Array[Dictionary] = [
-	{ "script": SkeletonEnemy,    "weight": 45 },
-	{ "script": ZombieKnight,     "weight": 25 },
-	{ "script": CarnivorousPlant, "weight": 30 }
+	{ "script": SkeletonEnemy,    "weight": 30 },
+	{ "script": SkeletonWarrior,  "weight": 18 },
+	{ "script": ZombieKnight,     "weight": 16 },
+	{ "script": CarnivorousPlant, "weight": 18 },
+	{ "script": BatEnemy,         "weight": 18 }
 ]
 
 var _current_floor: int = 1
@@ -27,6 +29,7 @@ var _is_transitioning_floor: bool = false
 var _enemies_container: Node3D
 var _chests_container: Node3D
 var _pots_container: Node3D
+var _vegetation_container: Node3D
 var _minimap: DungeonMinimap
 var _health_globe: HealthGlobe
 var _coin_hud: CoinHUD
@@ -49,6 +52,10 @@ func _ready() -> void:
 	_pots_container = Node3D.new()
 	_pots_container.name = "Pots"
 	add_child(_pots_container)
+	
+	_vegetation_container = Node3D.new()
+	_vegetation_container.name = "Vegetation"
+	add_child(_vegetation_container)
 	
 	_minimap = DungeonMinimap.new()
 	_minimap.name = "DungeonMinimap"
@@ -106,6 +113,7 @@ func _generate_floor(floor_num: int, custom_seed: int = -1) -> void:
 	player.spawn_at(spawn_pos)
 	_spawn_chests()
 	_spawn_pots()
+	_spawn_vegetation()
 	_spawn_enemies()
 	
 	if _minimap:
@@ -167,6 +175,19 @@ func _spawn_pots() -> void:
 		pot.rotation.y = randf_range(0.0, TAU)
 		pot.coin_spawned.connect(_on_pot_coin_spawned)
 		_pots_container.add_child(pot)
+
+func _spawn_vegetation() -> void:
+	for child in _vegetation_container.get_children():
+		child.queue_free()
+	if not dungeon.has_method("get_vegetation_spawn_points"):
+		return
+	for entry in dungeon.get_vegetation_spawn_points():
+		var veg := DungeonVegetation.new()
+		veg.kind = entry["kind"]
+		veg.ceiling_height = dungeon.wall_height
+		veg.position = entry["pos"]
+		veg.rotation.y = randf_range(0.0, TAU)
+		_vegetation_container.add_child(veg)
 
 func _on_pot_coin_spawned(coin: GoldCoin) -> void:
 	if coin:
