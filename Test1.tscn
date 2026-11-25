@@ -1,0 +1,18 @@
+[gd_scene format=3 uid="uid://fm1bcnjtek0c"]
+
+[ext_resource type="Script" uid="uid://c6016lb5nq4ud" path="res://player.gd" id="1_70e50"]
+[ext_resource type="Script" uid="uid://gv33wikr8wki" path="res://manager.gd" id="2_22fhl"]
+[ext_resource type="Script" uid="uid://dtnih6sxfumtp" path="res://dungeon_generator.gd" id="3_24ko3"]
+
+[node name="Test1" type="Node3D" unique_id=475010454]
+
+[node name="player" type="Node3D" parent="." unique_id=1808695991]
+script = ExtResource("1_70e50")
+
+[node name="manager" type="Node3D" parent="." unique_id=821073927 node_paths=PackedStringArray("dungeon", "player")]
+script = ExtResource("2_22fhl")
+dungeon = NodePath("../dung")
+player = NodePath("../player")
+
+[node name="dung" type="Node3D" parent="." unique_id=1444883738]
+script = ExtResource("3_24ko3")
